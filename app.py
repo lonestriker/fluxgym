@@ -23,6 +23,8 @@ import toml
 import re
 MAX_IMAGES = 150
 
+DEFAULT_PRESET = "Default"
+
 with open('models.yaml', 'r') as file:
     models = yaml.safe_load(file)
 
@@ -960,10 +962,12 @@ def get_configname(component_id):
 def apply_preset(preset_name: str):
     """Load and apply a preset configuration with correct parameter mapping"""
     presets = load_presets()
-    if preset_name not in presets:
+    print(f"DEBUG: apply_preset({preset_name})")
+    # Don't throw exception if trying to load default preset, but none are saved currently
+    if preset_name not in presets and preset_name != DEFAULT_PRESET:
         raise gr.Error(f"Preset '{preset_name}' not found")
     
-    config = presets[preset_name]
+    config = presets.get(preset_name, {})
     
     # Extract advanced component values in the same order as advanced_component_ids
     advanced_values = [config.get(get_configname(comp_id), None) for comp_id in advanced_component_ids]
@@ -1013,6 +1017,7 @@ with gr.Blocks(elem_id="app", theme=theme, css=css, fill_width=True) as demo:
                         preset_dropdown = gr.Dropdown(
                             label="Presets",
                             choices=list(load_presets().keys()),
+                            value=DEFAULT_PRESET,
                             interactive=True
                         )
                         preset_name = gr.Textbox(
@@ -1254,6 +1259,12 @@ with gr.Blocks(elem_id="app", theme=theme, css=css, fill_width=True) as demo:
     demo.load(
         fn=lambda: gr.update(choices=list(load_presets().keys())),
         outputs=[preset_dropdown]
+    )
+
+    demo.load(
+        fn=lambda: apply_preset(DEFAULT_PRESET),
+        # inputs=[DEFAULT_PRESET],
+        outputs=listeners
     )
 
 if __name__ == "__main__":
