@@ -744,7 +744,8 @@ def init_advanced():
         'sample_every_n_steps',
         'max_grad_norm',
         'split_mode',
-        'network_args'
+        'network_args',
+        'resolution',
     }
 
     # generate a UI config
@@ -890,6 +891,105 @@ function() {
 current_account = account_hf()
 print(f"current_account={current_account}")
 
+def load_presets():
+    """Load presets from presets.json"""
+    if os.path.exists('presets.json'):
+        with open('presets.json', 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_preset(name, config):
+    """Save a preset configuration"""
+    presets = load_presets()
+    presets[name] = config
+    with open('presets.json', 'w') as f:
+        json.dump(presets, f, indent=2)
+
+def get_current_config(
+    base_model: str,
+    lora_name: str,
+    resolution: int,
+    seed: int,
+    workers: int,
+    concept_sentence: str,
+    learning_rate: str,
+    network_dim: int,
+    max_train_epochs: int,
+    save_every_n_epochs: int,
+    timestep_sampling: str,
+    guidance_scale: float,
+    vram: str,
+    num_repeats: int,
+    sample_prompts: str,
+    sample_every_n_steps: int,
+    *advanced_components
+) -> dict:
+    """Get current configuration as a dictionary with correct parameter mapping"""
+    config = {
+        "base_model": base_model,
+        "lora_name": lora_name,
+        "resolution": resolution,
+        "seed": seed,
+        "workers": workers,
+        "concept_sentence": concept_sentence,
+        "learning_rate": learning_rate,
+        "network_dim": network_dim,
+        "max_train_epochs": max_train_epochs,
+        "save_every_n_epochs": save_every_n_epochs,
+        "timestep_sampling": timestep_sampling,
+        "guidance_scale": guidance_scale,
+        "vram": vram,
+        "num_repeats": num_repeats,
+        "sample_prompts": sample_prompts,
+        "sample_every_n_steps": sample_every_n_steps,
+    }
+    
+    # Add advanced components
+    # for i, value in enumerate(advanced_components):
+    #     config[advanced_component_ids[i]] = value
+    for arg, value in zip(advanced_component_ids, advanced_components):
+        print(f"DEBUG: {arg=}, {value=}")
+        config[get_configname(arg)] = value
+
+    return config
+
+def get_configname(component_id):
+    """ Get config name from component id, e.g. --foo returns foo """
+    return component_id.lstrip("--")
+
+def apply_preset(preset_name: str):
+    """Load and apply a preset configuration with correct parameter mapping"""
+    presets = load_presets()
+    if preset_name not in presets:
+        raise gr.Error(f"Preset '{preset_name}' not found")
+    
+    config = presets[preset_name]
+    
+    # Extract advanced component values in the same order as advanced_component_ids
+    advanced_values = [config.get(get_configname(comp_id), None) for comp_id in advanced_component_ids]
+    
+    # Return all values in the correct order matching the UI inputs
+    return [
+        config.get("base_model", ""),
+        config.get("lora_name", ""),
+        config.get("resolution", 512),
+        config.get("seed", 42),
+        config.get("workers", 2),
+        config.get("concept_sentence", ""),
+        config.get("learning_rate", "8e-4"),
+        config.get("network_dim", 4),
+        config.get("max_train_epochs", 16),
+        config.get("save_every_n_epochs", 4),
+        config.get("timestep_sampling", "shift"),
+        config.get("guidance_scale", 1.0),
+        config.get("vram", "20G"),
+        config.get("num_repeats", 10),
+        config.get("sample_prompts", ""),
+        config.get("sample_every_n_steps", 0),
+        *advanced_values
+    ]
+
+
 with gr.Blocks(elem_id="app", theme=theme, css=css, fill_width=True) as demo:
     with gr.Tabs() as tabs:
         with gr.TabItem("Gym"):
@@ -907,6 +1007,23 @@ with gr.Blocks(elem_id="app", theme=theme, css=css, fill_width=True) as demo:
                         """# Step 1. LoRA Info
         <p style="margin-top:0">Configure your LoRA train settings.</p>
         """, elem_classes="group_padding")
+                    
+                    # Add preset controls
+                    with gr.Row():
+                        preset_dropdown = gr.Dropdown(
+                            label="Presets",
+                            choices=list(load_presets().keys()),
+                            interactive=True
+                        )
+                        preset_name = gr.Textbox(
+                            label="New Preset Name",
+                            interactive=True
+                        )
+                    with gr.Row():
+                        save_preset_btn = gr.Button("Save As New Preset")
+                        update_preset_btn = gr.Button("Update Selected Preset")
+                        load_preset_btn = gr.Button("Load Preset")
+                    
                     lora_name = gr.Textbox(
                         label="The name of your LoRA",
                         info="This has to be a unique name",
@@ -928,7 +1045,7 @@ with gr.Blocks(elem_id="app", theme=theme, css=css, fill_width=True) as demo:
                     total_steps = gr.Number(0, interactive=False, label="Expected training steps")
                     sample_prompts = gr.Textbox("", lines=5, label="Sample Image Prompts (Separate with new lines)", interactive=True)
                     sample_every_n_steps = gr.Number(0, precision=0, label="Sample Image Every N Steps", interactive=True)
-                    resolution = gr.Number(value=512, precision=0, label="Resize dataset images")
+                    resolution = gr.Number(value=512, precision=0, label="Resize dataset images", interactive=True)
                 with gr.Column():
                     gr.Markdown(
                         """# Step 2. Dataset
@@ -1114,6 +1231,31 @@ with gr.Blocks(elem_id="app", theme=theme, css=css, fill_width=True) as demo:
     do_captioning.click(fn=run_captioning, inputs=[images, concept_sentence] + caption_list, outputs=caption_list)
     demo.load(fn=loaded, js=js, outputs=[hf_token, hf_login, hf_logout, repo_owner])
     refresh.click(update, inputs=listeners, outputs=[train_script, train_config, dataset_folder])
+
+    # Event handlers for preset buttons
+    save_preset_btn.click(
+        fn=lambda name, *params: save_preset(name, get_current_config(*params)) or gr.update(choices=list(load_presets().keys())),
+        inputs=[preset_name] + listeners,
+        outputs=[preset_dropdown]
+    )
+    
+    update_preset_btn.click(
+        fn=lambda name, *params: save_preset(name, get_current_config(*params)) if name else None,
+        inputs=[preset_dropdown] + listeners
+    )
+    
+    load_preset_btn.click(
+        fn=apply_preset,
+        inputs=[preset_dropdown],
+        outputs=listeners
+    )
+
+    # Refresh preset dropdown when the interface loads
+    demo.load(
+        fn=lambda: gr.update(choices=list(load_presets().keys())),
+        outputs=[preset_dropdown]
+    )
+
 if __name__ == "__main__":
     cwd = os.path.dirname(os.path.abspath(__file__))
     demo.launch(debug=True, show_error=True, allowed_paths=[cwd])
